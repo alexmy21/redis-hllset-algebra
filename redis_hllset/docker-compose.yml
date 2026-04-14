@@ -1,0 +1,26 @@
+# Podman-compatible compose file
+# Run with: podman-compose up -d
+# Or: podman play kube (after converting to k8s manifest)
+
+services:
+  redis:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: hllset-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data:Z
+      - ./functions:/usr/local/lib/redis/functions:ro,Z
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    # Podman-specific: run rootless
+    userns_mode: keep-id
+
+volumes:
+  redis-data:

@@ -1,0 +1,15 @@
+{
+    "timestamp": "20260414_121214",
+    "date": "2026-04-14T12:12:14-04:00",
+    "redis_host": "localhost",
+    "redis_port": "6379",
+    "redis_version": "7.0.15",
+    "hllset_keys": 17,
+    "meta_keys": 17,
+    "files": [
+        "hllset.lua",
+        "functions.rdb",
+        "keys.txt",
+        "manifest.json"
+    ]
+}
