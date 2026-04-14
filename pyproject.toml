@@ -1,0 +1,26 @@
+[build-system]
+requires      = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name            = "redis-hllset-algebra"
+version         = "0.1.0"
+description     = "HLLSet Algebra implemented as Lua Libraries in Redis"
+readme          = "README.md"
+license         = { text = "MIT" }
+requires-python = ">=3.8"
+dependencies    = ["redis>=4.0"]
+
+[project.optional-dependencies]
+test = ["pytest>=7", "fakeredis[lua]>=2.0"]
+dev  = ["redis-hllset-algebra[test]"]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["redis_hllset_algebra*"]
+
+[tool.setuptools.package-data]
+"redis_hllset_algebra" = ["scripts/*.lua"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
