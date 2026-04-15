@@ -291,13 +291,36 @@ class HLLSetDisambiguator:
                 for msg_id, fields in messages:
                     last_id = msg_id.decode() if isinstance(msg_id, bytes) else msg_id
                     
+                    # Parse stream fields (may be old single-token or new collision-aware format)
+                    key = fields.get(b"key", b"").decode()
+                    reg = int(fields.get(b"reg", 0))
+                    zeros = int(fields.get(b"zeros", 0))
+                    layer = int(fields.get(b"layer", 0))
+                    
+                    # Handle both old and new stream formats
+                    if b"first_tokens" in fields:
+                        # New collision-aware format
+                        first_tokens_raw = fields.get(b"first_tokens", b"[]").decode()
+                        tokens_raw = fields.get(b"tokens", b"[]").decode()
+                        first_tokens = json.loads(first_tokens_raw)
+                        tokens = json.loads(tokens_raw)
+                        collision_count = int(fields.get(b"collision_count", len(first_tokens) or 1))
+                    else:
+                        # Legacy single-token format
+                        token = fields.get(b"token", b"").decode()
+                        first_token = fields.get(b"first_token", b"").decode()
+                        first_tokens = [first_token] if first_token else ([token] if token else [])
+                        tokens = [[t for t in token.split()] if " " in token else []] if layer > 0 else []
+                        collision_count = 1
+                    
                     yield Candidate(
-                        key=fields.get(b"key", b"").decode(),
-                        token=fields.get(b"token", b"").decode(),
-                        reg=int(fields.get(b"reg", 0)),
-                        zeros=int(fields.get(b"zeros", 0)),
-                        layer=int(fields.get(b"layer", 0)),
-                        first_token=fields.get(b"first_token", b"").decode()
+                        key=key,
+                        reg=reg,
+                        zeros=zeros,
+                        layer=layer,
+                        collision_count=collision_count,
+                        first_tokens=first_tokens,
+                        tokens=tokens
                     )
     
     def create_position_index(

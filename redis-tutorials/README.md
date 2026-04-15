@@ -5,7 +5,7 @@ This folder contains tutorials for the Redis-native HLLSet Algebra implementatio
 ## Tutorial Structure
 
 | # | Tutorial | Description | Status |
-|---|----------|-------------|--------|
+| --- | ---------- | ------------- | -------- |
 | 01 | [HLLSet Redis](01_hllset_redis.ipynb) | Basic HLLSet operations with Redis backend | ✓ POC |
 | 02 | HLL Tensor Redis | 2D tensor view operations | Planned |
 | 03 | HLL Lattice Redis | Content-addressed DAG with RedisGraph | Planned |
@@ -25,6 +25,7 @@ This folder contains tutorials for the Redis-native HLLSet Algebra implementatio
    - `redisgraph` (graph queries, future)
 
 2. HLLSet Lua functions loaded:
+
    ```bash
    cd redis/scripts
    ./start_redis.sh
@@ -32,6 +33,7 @@ This folder contains tutorials for the Redis-native HLLSet Algebra implementatio
    ```
 
 3. Python packages:
+
    ```bash
    pip install redis
    ```

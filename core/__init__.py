@@ -204,6 +204,35 @@ from .hllset_store import (
     EphemeralLattice,
 )
 
+# L6r — HLLSet Store Redis (Redis-backed with RediSearch)
+try:
+    from .hllset_store_redis import (
+        HLLSetStoreRedis,
+        HLLSetEntry,
+        Operation as RedisOperation,
+        Derivation as RedisDerivation,
+    )
+    HLLSET_STORE_REDIS_AVAILABLE = True
+except ImportError:
+    HLLSET_STORE_REDIS_AVAILABLE = False
+
+# L6x — HLLSet Ring Store (XOR Ring Algebra with Base-Only Storage)
+try:
+    from .hllset_ring_store import (
+        HLLSetRingStore,
+        RingState,
+        DecomposeResult,
+        WCommit,
+        WDiff,
+        HLLSetMeta,
+        Derivation as RingDerivation,
+        Operation as RingOperation,
+        LRUCache,
+    )
+    HLLSET_RING_STORE_AVAILABLE = True
+except ImportError:
+    HLLSET_RING_STORE_AVAILABLE = False
+
 # L7 — Evolution (State De Bruijn Graph)
 from .evolution import (
     StateCommit,
