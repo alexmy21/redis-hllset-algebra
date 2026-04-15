@@ -40,6 +40,34 @@ try:
 except ImportError:
     REDIS_BACKEND_AVAILABLE = False
 
+# L2r — TokenLUT Redis (RediSearch-backed)
+try:
+    from .tokenlut_redis import (
+        TokenLUTRedis,
+        TokenEntry,
+    )
+    from .tokenlut_stream import (
+        TokenLUTStream,
+        StreamConfig,
+        IngestStats,
+        HashMode,
+        create_stream_lut,
+        ingest_file,
+    )
+    from .tokenlut_session import (
+        TokenLUTSession,
+        SessionProducer,
+        SessionConfig,
+        CheckpointResult,
+        CommitResult,
+        SessionStats,
+        create_session,
+        quick_ingest,
+    )
+    TOKENLUT_AVAILABLE = True
+except ImportError:
+    TOKENLUT_AVAILABLE = False
+
 # L0 — Ring algebra
 from .bitvector_ring import BitVector, BitVectorRing
 

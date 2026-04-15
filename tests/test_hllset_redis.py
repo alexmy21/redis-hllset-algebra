@@ -34,7 +34,7 @@ def test_with_redis():
     print("=" * 60)
     
     # Connect to Redis
-    r = redis.Redis(host='localhost', port=6379, decode_responses=False)
+    r = redis.Redis(host='127.0.0.1', port=6379, decode_responses=False)
     
     # Check connection
     try:

@@ -29,12 +29,14 @@ mod hllset;
 mod commands;
 mod rdb;
 mod bias;
+mod disambiguate;
 
 use redis_module::{redis_module, Context, RedisResult, Status};
 
 pub use hllset::HLLSet;
 pub use commands::*;
 pub use rdb::HLLSET_TYPE;
+pub use disambiguate::*;
 
 /// Module initialization
 fn init(ctx: &Context, _args: &[redis_module::RedisString]) -> Status {
@@ -82,5 +84,17 @@ redis_module! {
         
         // Merge (in-place union)
         ["hllset.merge", commands::hllset_merge, "write", 1, -1, 1],
+        
+        // Tensor / Active Positions (for TokenLUT disambiguation)
+        ["hllset.positions", commands::hllset_positions, "readonly", 1, 1, 1],
+        ["hllset.popcount", commands::hllset_popcount, "readonly fast", 1, 1, 1],
+        ["hllset.bitcounts", commands::hllset_bitcounts, "readonly", 1, 1, 1],
+        ["hllset.register", commands::hllset_register, "readonly fast", 1, 1, 1],
+        ["hllset.hasbit", commands::hllset_hasbit, "readonly fast", 1, 1, 1],
+        
+        // Disambiguation (zero-copy LUT matching with streaming)
+        ["hllset.candidates", disambiguate::hllset_candidates, "readonly", 1, 1, 1],
+        ["hllset.scanmatch", disambiguate::hllset_scanmatch, "readonly", 1, 1, 1],
+        ["hllset.posindex", disambiguate::hllset_posindex, "write", 1, 2, 1],
     ],
 }

@@ -158,11 +158,106 @@ impl HLLSet {
         }
     }
 
-    /// Estimate cardinality using HyperLogLog algorithm
+    /// Estimate cardinality using Horvitz-Thompson estimator
     ///
-    /// Inflates to dense format and uses harmonic mean of 2^(-maxidx)
-    /// where maxidx is the highest set bit position in each register.
+    /// This is the correct estimator for bitmap registers where we store
+    /// the SET of observed states (trailing-zero counts), not just the maximum.
+    ///
+    /// For each state s (bit position), we count c_s = number of registers
+    /// that have bit s set. Then we estimate frequency of state s as:
+    ///
+    ///   f̂_s = -n * ln(1 - c_s/n)
+    ///
+    /// Total cardinality = Σ f̂_s for all states s.
+    ///
+    /// This is unbiased under Poisson sampling model.
+    /// Reference: Horvitz-Thompson estimator for presence/absence data.
     pub fn cardinality(&self) -> f64 {
+        self.cardinality_ht()
+    }
+
+    /// Horvitz-Thompson cardinality estimator for bitmap HLLSet
+    ///
+    /// For bitmap registers storing the SET of all observed trailing-zero counts,
+    /// the proper estimator is:
+    ///
+    ///   c_s = count of registers with bit s set
+    ///   f̂_s = -n * ln(1 - c_s/n)  (estimated frequency for state s)
+    ///   cardinality = Σ f̂_s
+    ///
+    /// For saturated states (c_s = n), we use geometric extrapolation from
+    /// the highest non-saturated state, since each state s has expected
+    /// frequency 2x of state s+1.
+    pub fn cardinality_ht(&self) -> f64 {
+        let n = M as f64;
+        let m = M as u32;
+        let mut total = 0.0f64;
+
+        // Collect c_s values for all bit positions
+        let mut c_values = [0u32; BITS_PER_REG as usize];
+        for bit_pos in 0..BITS_PER_REG {
+            c_values[bit_pos as usize] = self.count_registers_with_bit(bit_pos);
+        }
+
+        // Find first non-saturated state and its estimate
+        let mut last_non_sat: i32 = -1;
+        let mut last_f_hat = 0.0f64;
+        
+        for bit_pos in 0..BITS_PER_REG {
+            let c_s = c_values[bit_pos as usize];
+            if c_s > 0 && c_s < m {
+                last_non_sat = bit_pos as i32;
+                let ratio = c_s as f64 / n;
+                last_f_hat = -n * (1.0 - ratio).ln();
+                break;
+            }
+        }
+
+        // Calculate estimates with saturation handling
+        for bit_pos in 0..BITS_PER_REG {
+            let c_s = c_values[bit_pos as usize];
+            
+            if c_s == 0 {
+                continue;
+            } else if c_s < m {
+                // Normal HT estimate
+                let ratio = c_s as f64 / n;
+                total += -n * (1.0 - ratio).ln();
+            } else {
+                // Saturated: extrapolate using geometric series
+                // State s has 2x the frequency of state s+1
+                if last_non_sat > bit_pos as i32 {
+                    // Extrapolate: each lower bit doubles the frequency
+                    total += last_f_hat * 2.0f64.powi(last_non_sat - bit_pos as i32);
+                } else {
+                    // No non-saturated state found yet, use fallback
+                    total += n * n.ln();
+                }
+            }
+        }
+
+        total.round().max(0.0)
+    }
+
+    /// Count how many registers have a specific bit position set
+    fn count_registers_with_bit(&self, bit_pos: u32) -> u32 {
+        let mut count = 0u32;
+        
+        // Iterate through sparse bitmap positions
+        for pos in self.bitmap.iter() {
+            let bit = pos % BITS_PER_REG;
+            
+            if bit == bit_pos {
+                count += 1;
+            }
+        }
+        
+        count
+    }
+
+    /// Legacy HLL cardinality (for comparison)
+    #[allow(dead_code)]
+    pub fn cardinality_hll(&self) -> f64 {
         let registers = self.to_dense();
 
         // Calculate harmonic mean of 2^(-highest_set_bit)
@@ -338,6 +433,51 @@ impl HLLSet {
             .filter(|(_, &r)| r != 0)
             .map(|(i, &r)| (i as u32, Self::highest_set_bit(r)))
             .collect()
+    }
+
+    /// Get all active (reg, zeros) positions where bits are set.
+    /// 
+    /// This is the 2D tensor view used for disambiguation:
+    /// each active position represents a potential token inscription.
+    /// 
+    /// Returns: Vec of (register_index, zeros_count) tuples
+    pub fn active_positions(&self) -> Vec<(u32, u32)> {
+        let mut positions = Vec::new();
+        
+        // Iterate directly through sparse bitmap
+        for pos in self.bitmap.iter() {
+            let reg = pos / BITS_PER_REG;
+            let zeros = pos % BITS_PER_REG;
+            positions.push((reg, zeros));
+        }
+        
+        positions
+    }
+    
+    /// Get popcount (total number of set bits)
+    pub fn popcount(&self) -> u64 {
+        self.bitmap.len()
+    }
+    
+    /// Get popcount per register
+    pub fn register_popcounts(&self) -> Vec<u32> {
+        let registers = self.to_dense();
+        registers
+            .iter()
+            .map(|&r| r.count_ones())
+            .collect()
+    }
+    
+    /// Get c_s counts (number of registers with bit s set) for HT estimator
+    pub fn bit_counts(&self) -> Vec<u32> {
+        let mut counts = vec![0u32; BITS_PER_REG as usize];
+        
+        for pos in self.bitmap.iter() {
+            let bit = (pos % BITS_PER_REG) as usize;
+            counts[bit] += 1;
+        }
+        
+        counts
     }
 
     /// Check if empty

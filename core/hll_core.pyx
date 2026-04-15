@@ -298,22 +298,119 @@ cdef class HLLCore:
 
     def cardinality(self):
         """
-        Estimate cardinality using HLL++ with empirical bias correction.
+        Estimate cardinality using Horvitz-Thompson estimator.
+        
+        This is the correct estimator for bitmap registers where we store
+        the SET of observed states (trailing-zero counts), not just the maximum.
+        
+        For each state s (bit position), we count c_s = number of registers
+        that have bit s set. Then we estimate frequency of state s as:
+        
+          f̂_s = -n * ln(1 - c_s/n)
+        
+        Total cardinality = Σ f̂_s for all states s.
+        
+        This is unbiased under Poisson sampling model.
+        Reference: Horvitz-Thompson estimator for presence/absence data.
+        """
+        return self.cardinality_ht()
+
+    def cardinality_ht(self):
+        """
+        Horvitz-Thompson cardinality estimator for bitmap HLLSet.
+        
+        For bitmap registers storing the SET of all observed trailing-zero counts,
+        the proper estimator is:
+        
+          c_s = count of registers with bit s set
+          f̂_s = -n * ln(1 - c_s/n)  (estimated frequency for state s)
+          cardinality = Σ f̂_s
+        
+        For saturated states (c_s = n), we use geometric extrapolation from
+        the highest non-saturated state, since each state s has expected 
+        frequency 2x of state s+1.
+        """
+        cdef int m = self.m
+        cdef double n = <double>m
+        cdef double total = 0.0
+        cdef int bit_pos, c_s
+        cdef double ratio
+        cdef double last_f_hat = 0.0  # Last non-saturated estimate
+        cdef int last_non_sat = -1    # Last non-saturated bit position
+        cdef int saturated_count = 0
+        
+        # First pass: find all c_s values and identify saturation boundary
+        cdef int c_values[32]
+        for bit_pos in range(32):
+            c_values[bit_pos] = self._count_registers_with_bit(bit_pos)
+        
+        # Find first non-saturated state (from low to high bits)
+        for bit_pos in range(32):
+            c_s = c_values[bit_pos]
+            if c_s > 0 and c_s < m:
+                last_non_sat = bit_pos
+                ratio = <double>c_s / n
+                last_f_hat = -n * log(1.0 - ratio)
+                break
+            elif c_s == m:
+                saturated_count += 1
+        
+        # Second pass: calculate estimates
+        for bit_pos in range(32):
+            c_s = c_values[bit_pos]
+            
+            if c_s == 0:
+                continue
+            elif c_s < m:
+                # Normal HT estimate
+                ratio = <double>c_s / n
+                total += -n * log(1.0 - ratio)
+            else:
+                # Saturated: extrapolate using geometric series
+                # State s has 2x the frequency of state s+1
+                # So if state k is first non-saturated with f̂_k,
+                # state s (s < k) has f̂_s ≈ f̂_k * 2^(k-s)
+                if last_non_sat > bit_pos:
+                    # Extrapolate: each lower bit doubles the frequency
+                    total += last_f_hat * pow(2.0, <double>(last_non_sat - bit_pos))
+                else:
+                    # No non-saturated state found yet, use fallback
+                    total += n * log(n)
+        
+        return max(0.0, round(total))
+
+    cdef int _count_registers_with_bit(self, int bit_pos) nogil:
+        """Count how many registers have a specific bit position set."""
+        cdef int count = 0
+        cdef int i
+        cdef uint32_t mask = <uint32_t>1 << bit_pos
+        
+        for i in range(self.m):
+            if self.registers_view[i] & mask:
+                count += 1
+        
+        return count
+
+    def cardinality_hll(self):
+        """
+        Estimate cardinality using HLL++ with empirical bias correction and
+        linear counting for small cardinalities.
 
         Uses highest_set_bit() per register (equivalent to Julia's maxidx),
         then harmonic mean with alpha correction, PLUS Google HLL++ empirical
         bias correction from Heule et al. 2013.
 
-        Matches Julia HllSets.jl count() exactly:
-            harmonic_mean = sizeof(x) / sum(1 / 1 << maxidx(i) for i in x.counts)
-            biased_estimate = α(x) * sizeof(x) * harmonic_mean
-            return max(0, round(biased_estimate - bias(x, biased_estimate) - 1))
+        For small cardinalities (when there are empty registers and the raw
+        estimate is below threshold), uses linear counting for better accuracy.
+
+        Matches Julia HllSets.jl count() for larger cardinalities, and uses
+        HLL++ linear counting for small cardinalities.
         """
         from core.hll_constants import estimate_bias
 
         cdef double raw_sum = self._compute_raw_estimate()
         cdef int m = self.m
-        cdef double alpha, biased_estimate, bias_correction
+        cdef double alpha, biased_estimate, bias_correction, linear_count
         cdef int zero_count
 
         # Empty set fast-path: if all registers are zero, cardinality is 0
@@ -335,11 +432,18 @@ cdef class HLLCore:
         # This is equivalent to alpha * m^2 / raw_sum
         biased_estimate = alpha * m * m / raw_sum
 
+        # HLL++ linear counting for small cardinalities (when empty registers exist)
+        # Threshold is 2.5 * m as recommended in HLL++ paper
+        if zero_count > 0 and biased_estimate <= 2.5 * m:
+            # Linear counting: m * ln(m / V) where V is count of empty registers
+            linear_count = m * log(<double>m / <double>zero_count)
+            return max(0.0, round(linear_count))
+
         # HLL++ empirical bias correction (Google, Heule et al. 2013)
         # For precisions 4-18, use lookup tables with linear interpolation
         bias_correction = estimate_bias(self.p_bits, biased_estimate)
 
-        # Julia formula: max(0, round(biased_estimate - bias - 1))
+        # Formula: max(0, round(biased_estimate - bias - 1))
         return max(0.0, round(biased_estimate - bias_correction - 1))
 
     cdef double _compute_raw_estimate(self) nogil:
