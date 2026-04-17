@@ -358,6 +358,49 @@ pub fn hllset_merge(ctx: &Context, args: Vec<RedisString>) -> RedisResult {
     Ok(RedisValue::SimpleStringStatic("OK"))
 }
 
+/// HLLSET.FINALIZE source_key [DELETE]
+/// Compute content hash, copy HLLSet to hllset:<sha1> key, optionally delete source.
+/// Returns the new content-addressable key name.
+/// 
+/// This command enables workflow patterns where intermediate results are built
+/// incrementally (e.g., with MERGE), then finalized to a content-addressable key.
+pub fn hllset_finalize(ctx: &Context, args: Vec<RedisString>) -> RedisResult {
+    if args.len() < 2 || args.len() > 3 {
+        return Err(RedisError::WrongArity);
+    }
+    
+    let source_key = &args[1];
+    let delete_source = args.len() == 3 && args[2].to_string_lossy().to_uppercase() == "DELETE";
+    
+    // Get the source HLLSet
+    let hllset = get_hllset_readonly(ctx, source_key)?
+        .ok_or_else(|| RedisError::String("Source key not found".to_string()))?;
+    
+    // Compute content hash
+    let content_hash = hllset.content_hash();
+    let new_key = format!("hllset:{}", content_hash);
+    
+    // Check if source is already at the canonical key
+    let source_str = source_key.to_string_lossy();
+    if source_str == new_key {
+        // Already finalized - just return the key
+        return Ok(RedisValue::BulkString(new_key));
+    }
+    
+    // Write to canonical key
+    let new_key_rs = ctx.create_string(new_key.as_bytes());
+    let key_handle = ctx.open_key_writable(&new_key_rs);
+    key_handle.set_value(&HLLSET_TYPE, hllset)?;
+    
+    // Optionally delete source
+    if delete_source {
+        let source_handle = ctx.open_key_writable(source_key);
+        source_handle.delete()?;
+    }
+    
+    Ok(RedisValue::BulkString(new_key))
+}
+
 /// Extract short hash from key for derived key names
 fn extract_key_hash(key: &str) -> String {
     if let Some(hash_part) = key.strip_prefix("hllset:") {

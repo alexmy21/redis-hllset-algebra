@@ -33,8 +33,8 @@ import hashlib
 import struct
 import redis as redis_lib
 
-# Import from local hllset for hash config compatibility
-from .hllset import (
+# Import from parent package hllset for hash config compatibility
+from ..hllset import (
     HashConfig,
     HashType,
     DEFAULT_HASH_CONFIG,

@@ -7,22 +7,24 @@ This folder contains tutorials for the Redis-native HLLSet Algebra implementatio
 | # | Tutorial | Description | Status |
 | --- | ---------- | ------------- | -------- |
 | 01 | [HLLSet Redis](01_hllset_redis.ipynb) | Basic HLLSet operations with Redis backend | ✓ POC |
-| 02 | HLL Tensor Redis | 2D tensor view operations | Planned |
-| 03 | HLL Lattice Redis | Content-addressed DAG with RedisGraph | Planned |
-| 04 | Global Registry Redis | Persistent universe sets G₁, G₂, G₃ | Planned |
-| 05 | BSS Redis | Bell State Similarity metrics | Planned |
-| 06 | Ring Transaction Redis | IICA protocol with Redis transactions | Planned |
-| 07 | Disambiguation Redis | Token recovery with RedisSearch | Planned |
-| 08 | De Bruijn Redis | Sequence reconstruction | Planned |
-| 09 | Bayesian Redis | Probabilistic inference | Planned |
-| 10 | Markov Redis | Markov chains on HLLSets | Planned |
+| 02 | [TokenLUT Redis](02_tokenlut_redis.ipynb) | Token lookup table with Redis | ✓ POC |
+| 03 | [Disambiguation](03_disambiguation.ipynb) | Token recovery with HLLSet | ✓ POC |
+| 04 | [Ring Store](04_hllset_ring_store.ipynb) | IICA protocol with Rust RING commands | ✓ POC |
+| 05 | [De Bruijn RedisGraph](05_debruijn_redisgraph.ipynb) | Sequence reconstruction with RedisGraph | ✓ POC |
+| 06 | Global Registry Redis | Persistent universe sets G₁, G₂, G₃ | Planned |
+| 07 | HLL Tensor Redis | 2D tensor view operations | Planned |
+| 08 | HLL Lattice Redis | Content-addressed DAG with RedisGraph | Planned |
+| 09 | BSS Redis | Bell State Similarity metrics | Planned |
+| 10 | Bayesian Redis | Probabilistic inference | Planned |
+| 11 | Markov Redis | Markov chains on HLLSets | Planned |
 
 ## Prerequisites
 
 1. Redis server running with modules:
+   - `hllset` (HLLSet native operations)
    - `redis-roaring` (Roaring bitmaps)
+   - `redisgraph` (graph queries for De Bruijn)
    - `redisearch` (full-text search, future)
-   - `redisgraph` (graph queries, future)
 
 2. HLLSet Lua functions loaded:
 

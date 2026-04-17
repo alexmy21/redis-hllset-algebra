@@ -85,6 +85,9 @@ redis_module! {
         // Merge (in-place union)
         ["hllset.merge", commands::hllset_merge, "write", 1, -1, 1],
         
+        // Finalize (copy to content-addressable key)
+        ["hllset.finalize", commands::hllset_finalize, "write", 1, 1, 1],
+        
         // Tensor / Active Positions (for TokenLUT disambiguation)
         ["hllset.positions", commands::hllset_positions, "readonly", 1, 1, 1],
         ["hllset.popcount", commands::hllset_popcount, "readonly fast", 1, 1, 1],

@@ -72,7 +72,7 @@ from redis.commands.search.field import TextField, NumericField, TagField
 from redis.commands.search.index_definition import IndexDefinition, IndexType
 from redis.commands.search.query import Query
 
-from .hllset import HLLSet
+from ..hllset import HLLSet
 
 
 # =============================================================================

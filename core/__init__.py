@@ -30,7 +30,7 @@ from .hllset import (
 
 # L2r — Redis-backed HLLSet (optional)
 try:
-    from .hllset_redis import (
+    from .redis.hllset_redis import (
         HLLSetRedis,
         RedisClientManager,
         load_functions as load_redis_functions,
@@ -42,11 +42,11 @@ except ImportError:
 
 # L2r — TokenLUT Redis (RediSearch-backed)
 try:
-    from .tokenlut_redis import (
+    from .redis.tokenlut_redis import (
         TokenLUTRedis,
         TokenEntry,
     )
-    from .tokenlut_stream import (
+    from .redis.tokenlut_stream import (
         TokenLUTStream,
         StreamConfig,
         IngestStats,
@@ -54,7 +54,7 @@ try:
         create_stream_lut,
         ingest_file,
     )
-    from .tokenlut_session import (
+    from .redis.tokenlut_session import (
         TokenLUTSession,
         SessionProducer,
         SessionConfig,
@@ -206,7 +206,7 @@ from .hllset_store import (
 
 # L6r — HLLSet Store Redis (Redis-backed with RediSearch)
 try:
-    from .hllset_store_redis import (
+    from .redis.hllset_store_redis import (
         HLLSetStoreRedis,
         HLLSetEntry,
         Operation as RedisOperation,
@@ -218,7 +218,7 @@ except ImportError:
 
 # L6x — HLLSet Ring Store (XOR Ring Algebra with Base-Only Storage)
 try:
-    from .hllset_ring_store import (
+    from .redis.hllset_ring_store import (
         HLLSetRingStore,
         RingState,
         DecomposeResult,

@@ -77,7 +77,7 @@ from redis.commands.search.field import TextField, NumericField, TagField
 from redis.commands.search.index_definition import IndexDefinition, IndexType
 from redis.commands.search.query import Query
 
-from .hllset import HLLSet
+from ..hllset import HLLSet
 
 
 # =============================================================================
@@ -146,15 +146,19 @@ class RingState:
         def decode(v):
             return v.decode('utf-8') if isinstance(v, bytes) else v
         
-        basis_raw = decode(d.get('basis_sha1s', '[]'))
+        def get_field(name: str, default=''):
+            # Handle both bytes and string keys
+            return d.get(name, d.get(name.encode('utf-8'), default))
+        
+        basis_raw = decode(get_field('basis_sha1s', '[]'))
         basis_sha1s = json.loads(basis_raw) if basis_raw else []
         
         return cls(
-            ring_id=decode(d.get('ring_id', '')),
+            ring_id=decode(get_field('ring_id', '')),
             basis_sha1s=basis_sha1s,
-            created_at=float(decode(d.get('created_at', 0))),
-            updated_at=float(decode(d.get('updated_at', 0))),
-            p_bits=int(decode(d.get('p_bits', 10))),
+            created_at=float(decode(get_field('created_at', 0))),
+            updated_at=float(decode(get_field('updated_at', 0))),
+            p_bits=int(decode(get_field('p_bits', 10))),
         )
 
 
@@ -185,12 +189,15 @@ class WCommit:
         def decode(v):
             return v.decode('utf-8') if isinstance(v, bytes) else v
         
+        def get_field(name: str, default=''):
+            return d.get(name, d.get(name.encode('utf-8'), default))
+        
         return cls(
-            ring_id=decode(d.get('ring_id', '')),
-            time_index=int(decode(d.get('time_index', 0))),
-            basis_sha1s=json.loads(decode(d.get('basis_sha1s', '[]'))),
-            timestamp=float(decode(d.get('timestamp', 0))),
-            metadata=json.loads(decode(d.get('metadata', '{}'))),
+            ring_id=decode(get_field('ring_id', '')),
+            time_index=int(decode(get_field('time_index', 0))),
+            basis_sha1s=json.loads(decode(get_field('basis_sha1s', '[]'))),
+            timestamp=float(decode(get_field('timestamp', 0))),
+            metadata=json.loads(decode(get_field('metadata', '{}'))),
         )
 
 
@@ -240,19 +247,22 @@ class HLLSetMeta:
         def decode(v):
             return v.decode('utf-8') if isinstance(v, bytes) else v
         
-        tags_raw = decode(d.get('tags', ''))
+        def get_field(name: str, default=''):
+            return d.get(name, d.get(name.encode('utf-8'), default))
+        
+        tags_raw = decode(get_field('tags', ''))
         tags = [t.strip() for t in tags_raw.split(',') if t.strip()]
         
         return cls(
-            sha1=decode(d.get('sha1', '')),
-            source=decode(d.get('source', '')),
-            cardinality=float(decode(d.get('cardinality', 0))),
-            created_at=float(decode(d.get('created_at', 0))),
-            updated_at=float(decode(d.get('updated_at', 0))),
-            is_base=int(decode(d.get('is_base', 1))) == 1,
-            refcount=int(decode(d.get('refcount', 0))),
+            sha1=decode(get_field('sha1', '')),
+            source=decode(get_field('source', '')),
+            cardinality=float(decode(get_field('cardinality', 0))),
+            created_at=float(decode(get_field('created_at', 0))),
+            updated_at=float(decode(get_field('updated_at', 0))),
+            is_base=int(decode(get_field('is_base', 1))) == 1,
+            refcount=int(decode(get_field('refcount', 0))),
             tags=tags,
-            metadata=json.loads(decode(d.get('metadata', '{}'))),
+            metadata=json.loads(decode(get_field('metadata', '{}'))),
         )
 
 
@@ -275,10 +285,13 @@ class Derivation:
         def decode(v):
             return v.decode('utf-8') if isinstance(v, bytes) else v
         
+        def get_field(name: str, default=''):
+            return d.get(name, d.get(name.encode('utf-8'), default))
+        
         return cls(
-            operation=Operation(decode(d.get('operation', 'base'))),
-            bases=json.loads(decode(d.get('bases', '[]'))),
-            timestamp=float(decode(d.get('timestamp', 0))),
+            operation=Operation(decode(get_field('operation', 'base'))),
+            bases=json.loads(decode(get_field('bases', '[]'))),
+            timestamp=float(decode(get_field('timestamp', 0))),
         )
 
 
@@ -367,6 +380,7 @@ class HLLSetRingStore:
         prefix: str = DEFAULT_PREFIX,
         cache_size: int = 100,
         p_bits: int = 10,
+        use_rust: Optional[bool] = None,
     ):
         self.client = client
         self.prefix = prefix
@@ -374,9 +388,36 @@ class HLLSetRingStore:
         self._cache = LRUCache(cache_size)
         
         # In-memory ring matrices for Gaussian elimination
-        # (Will be moved to Rust module later)
+        # (Used when Rust module not available)
         self._ring_matrices: Dict[str, np.ndarray] = {}
         self._ring_pivots: Dict[str, List[int]] = {}
+        
+        # Determine if Rust ring commands are available
+        if use_rust is None:
+            self._use_rust = self._detect_rust_ring_commands()
+        else:
+            self._use_rust = use_rust
+    
+    def _detect_rust_ring_commands(self) -> bool:
+        """Check if Rust RING commands are available in the loaded module."""
+        try:
+            # Try calling a Rust ring command - it will fail gracefully if not loaded
+            result = self.client.execute_command("HLLSET.RING.RANK", "nonexistent")
+            # If we get here (even with "not found" response), the command exists
+            return True
+        except redis.ResponseError as e:
+            # Command doesn't exist if we get "unknown command"
+            if "unknown command" in str(e).lower():
+                return False
+            # Other errors (like "ring not found") mean the command exists
+            return True
+        except Exception:
+            return False
+    
+    @property
+    def using_rust(self) -> bool:
+        """Return True if using Rust ring commands."""
+        return self._use_rust
     
     # =========================================================================
     # Key Helpers
@@ -447,14 +488,40 @@ class HLLSetRingStore:
             RingState object
         """
         p = p_bits or self.p_bits
-        num_registers = 1 << p
+        
+        if self._use_rust:
+            return self._init_ring_rust(ring_id, p)
+        else:
+            return self._init_ring_python(ring_id, p)
+    
+    def _init_ring_rust(self, ring_id: str, p_bits: int) -> RingState:
+        """Initialize ring using Rust RING.INIT command."""
+        try:
+            result = self.client.execute_command(
+                "HLLSET.RING.INIT", ring_id, "P_BITS", p_bits
+            )
+            # Result format: ["OK", ring_id, rank, created_at]
+            state = RingState(
+                ring_id=ring_id,
+                basis_sha1s=[],
+                created_at=time.time(),
+                updated_at=time.time(),
+                p_bits=p_bits,
+            )
+            return state
+        except redis.ResponseError as e:
+            raise RuntimeError(f"Rust RING.INIT failed: {e}")
+    
+    def _init_ring_python(self, ring_id: str, p_bits: int) -> RingState:
+        """Initialize ring using Python (in-memory matrices)."""
+        num_registers = 1 << p_bits
         
         state = RingState(
             ring_id=ring_id,
             basis_sha1s=[],
             created_at=time.time(),
             updated_at=time.time(),
-            p_bits=p,
+            p_bits=p_bits,
         )
         
         # Initialize in-memory matrix for Gaussian elimination
@@ -559,6 +626,7 @@ class HLLSetRingStore:
         Decompose an HLLSet into XOR of basis elements.
         
         Uses Gaussian elimination over GF(2) to find the unique representation.
+        If Rust module is loaded, uses server-side decomposition for efficiency.
         
         Args:
             ring_id: Ring to use for decomposition
@@ -568,6 +636,110 @@ class HLLSetRingStore:
             
         Returns:
             DecomposeResult with SHA1, expression, and whether it's a new base
+        """
+        if self._use_rust:
+            return self._decompose_rust(ring_id, hll, source, tags)
+        else:
+            return self._decompose_python(ring_id, hll, source, tags)
+    
+    def _decompose_rust(
+        self,
+        ring_id: str,
+        hll: HLLSet,
+        source: str = "",
+        tags: Optional[List[str]] = None,
+    ) -> DecomposeResult:
+        """
+        Decompose using Rust RING.DECOMPOSE command.
+        
+        Server-side decomposition eliminates round-trips for Gaussian elimination.
+        """
+        sha1 = self.compute_sha1(hll)
+        now = time.time()
+        
+        # Check if already decomposed (local check to save round-trip)
+        existing = self.get_derivation(sha1)
+        if existing:
+            state = self.get_ring(ring_id)
+            return DecomposeResult(
+                sha1=sha1,
+                is_new_base=existing.operation == Operation.BASE,
+                expression=existing.bases if existing.operation == Operation.XOR else [sha1],
+                rank_before=state.rank if state else 0,
+                rank_after=state.rank if state else 0,
+            )
+        
+        # First, store the HLLSet in Redis for the Rust command to access
+        temp_key = f"{self.prefix}temp:{sha1}"
+        self.client.execute_command("HLLSET.CREATE", temp_key, "P_BITS", hll.p_bits)
+        
+        # Build the HLLSet in Redis from our local data
+        # We need to transfer the bitvector data
+        # For now, use numpy serialization
+        data = hll.dump_numpy().tobytes()
+        self.client.set(f"{temp_key}:data", data)
+        
+        try:
+            # Call RING.DECOMPOSE
+            result = self.client.execute_command(
+                "HLLSET.RING.DECOMPOSE", ring_id, temp_key, "SOURCE", source
+            )
+            
+            # Parse result: [sha1, is_new_base, rank_before, rank_after, expr1, expr2, ...]
+            if isinstance(result, (list, tuple)) and len(result) >= 4:
+                result_sha1 = result[0].decode() if isinstance(result[0], bytes) else str(result[0])
+                is_new_base = bool(result[1])
+                rank_before = int(result[2])
+                rank_after = int(result[3])
+                expression = [
+                    r.decode() if isinstance(r, bytes) else str(r)
+                    for r in result[4:]
+                ]
+                
+                # Store metadata locally
+                meta = HLLSetMeta(
+                    sha1=result_sha1,
+                    source=source,
+                    cardinality=hll.cardinality(),
+                    created_at=now,
+                    updated_at=now,
+                    is_base=is_new_base,
+                    refcount=0,
+                    tags=tags or [],
+                )
+                self._store_meta(result_sha1, meta)
+                
+                # Store derivation
+                op = Operation.BASE if is_new_base else Operation.XOR
+                deriv = Derivation(operation=op, bases=expression, timestamp=now)
+                self._store_derivation(result_sha1, deriv)
+                
+                return DecomposeResult(
+                    sha1=result_sha1,
+                    is_new_base=is_new_base,
+                    expression=expression,
+                    rank_before=rank_before,
+                    rank_after=rank_after,
+                )
+            else:
+                raise RuntimeError(f"Unexpected RING.DECOMPOSE result format: {result}")
+                
+        finally:
+            # Cleanup temp key
+            self.client.delete(temp_key)
+            self.client.delete(f"{temp_key}:data")
+    
+    def _decompose_python(
+        self,
+        ring_id: str,
+        hll: HLLSet,
+        source: str = "",
+        tags: Optional[List[str]] = None,
+    ) -> DecomposeResult:
+        """
+        Decompose using Python (in-memory Gaussian elimination).
+        
+        Original implementation for when Rust module is not available.
         """
         # Ensure ring is loaded
         if ring_id not in self._ring_matrices:
@@ -720,10 +892,55 @@ class HLLSetRingStore:
         Returns:
             DecomposeResult
         """
-        # Create HLLSet from token using from_batch
-        hll = HLLSet.from_batch([token], p_bits=self.p_bits)
+        if self._use_rust:
+            return self._ingest_rust(ring_id, token, source, tags)
+        else:
+            # Create HLLSet from token using from_batch
+            hll = HLLSet.from_batch([token], p_bits=self.p_bits)
+            return self._decompose_python(ring_id, hll, source=source, tags=tags)
+    
+    def _ingest_rust(
+        self,
+        ring_id: str,
+        token: str,
+        source: str = "",
+        tags: Optional[List[str]] = None,
+    ) -> DecomposeResult:
+        """Ingest using Rust RING.INGEST command (server-side HLLSet creation)."""
+        # Build command args
+        args = ["HLLSET.RING.INGEST", ring_id, token]
+        if source:
+            args.extend(["SOURCE", source])
+        if tags:
+            args.extend(["TAGS", ",".join(tags)])
         
-        return self.decompose(ring_id, hll, source=source, tags=tags)
+        # Execute
+        result = self.client.execute_command(*args)
+        
+        # Parse result: [sha1, is_new_base, num_bases, base1, base2, ...]
+        # Rust format: 0=sha1, 1=is_new_base(0/1), 2=num_bases, 3+=expression
+        if isinstance(result, (list, tuple)) and len(result) >= 3:
+            result_sha1 = result[0].decode() if isinstance(result[0], bytes) else str(result[0])
+            is_new_base = bool(result[1])
+            num_bases = int(result[2])
+            expression = [
+                r.decode() if isinstance(r, bytes) else str(r)
+                for r in result[3:]
+            ]
+            
+            # Get current rank from ring state
+            ring_state = self.get_ring(ring_id)
+            rank = ring_state.rank if ring_state else num_bases
+            
+            return DecomposeResult(
+                sha1=result_sha1,
+                is_new_base=is_new_base,
+                expression=expression if expression else [result_sha1],
+                rank_before=rank - (1 if is_new_base else 0),
+                rank_after=rank,
+            )
+        else:
+            raise ValueError(f"Unexpected RING.INGEST result: {result}")
     
     def ingest_batch(
         self,
@@ -748,17 +965,54 @@ class HLLSetRingStore:
         self.client.set(key, hll.dump_numpy().tobytes())
     
     def _get_base(self, sha1: HLLSetID) -> Optional[HLLSet]:
-        """Get base HLLSet from storage."""
+        """Get base HLLSet from storage.
+        
+        Handles both:
+        - Python storage: raw bytes (STRING)
+        - Rust storage: native hllset-rs type
+        """
         import numpy as np
         key = self._key(KEY_BASE, sha1)
-        data = self.client.get(key)
-        if data:
-            registers = np.frombuffer(data, dtype=np.uint32)
-            hll = HLLSet(p_bits=self.p_bits)
-            hll._core.set_registers(registers)
-            hll._compute_name()
-            return hll
-        return None
+        
+        # Check key type
+        key_type = self.client.type(key)
+        if isinstance(key_type, bytes):
+            key_type = key_type.decode()
+        
+        if key_type == 'none':
+            return None
+        elif key_type == 'string':
+            # Python format: raw bytes
+            data = self.client.get(key)
+            if data:
+                registers = np.frombuffer(data, dtype=np.uint32)
+                hll = HLLSet(p_bits=self.p_bits)
+                hll._core.set_registers(registers)
+                hll._compute_name()
+                return hll
+            return None
+        elif key_type == 'hllset-rs' or key_type.startswith('hllset'):
+            # Rust format: native HLLSet type, use HLLSET.DUMP
+            # DUMP returns sparse format: [(register_index, value), ...]
+            result = self.client.execute_command("HLLSET.DUMP", key)
+            if result and isinstance(result, list):
+                # Create dense array from sparse representation
+                num_registers = 1 << self.p_bits
+                registers = np.zeros(num_registers, dtype=np.uint32)
+                for entry in result:
+                    if isinstance(entry, (list, tuple)) and len(entry) >= 2:
+                        idx, val = int(entry[0]), int(entry[1])
+                        if 0 <= idx < num_registers:
+                            registers[idx] = val
+                
+                hll = HLLSet(p_bits=self.p_bits)
+                hll._core.set_registers(registers)
+                hll._compute_name()
+                return hll
+            return None
+        else:
+            # Unknown type
+            return None
     
     def _store_meta(self, sha1: HLLSetID, meta: HLLSetMeta):
         """Store metadata."""
@@ -892,6 +1146,63 @@ class HLLSetRingStore:
         Returns:
             WCommit object
         """
+        if self._use_rust:
+            return self._commit_W_rust(ring_id, time_index, metadata)
+        else:
+            return self._commit_W_python(ring_id, time_index, metadata)
+    
+    def _commit_W_rust(
+        self,
+        ring_id: str,
+        time_index: Optional[int] = None,
+        metadata: Optional[Dict] = None,
+    ) -> WCommit:
+        """Create W commit using Rust W.COMMIT command."""
+        try:
+            args = ["HLLSET.W.COMMIT", ring_id]
+            if time_index is not None:
+                args.extend(["TIME", str(time_index)])
+            if metadata:
+                args.extend(["META", json.dumps(metadata)])
+            
+            result = self.client.execute_command(*args)
+            
+            # Rust returns just the time index as an integer
+            if isinstance(result, int):
+                t_idx = result
+            elif isinstance(result, (list, tuple)) and len(result) >= 1:
+                t_idx = int(result[0])
+            else:
+                raise RuntimeError(f"Unexpected W.COMMIT result: {result}")
+            
+            # Fetch the stored commit from Redis to get full data
+            w_key = f"{self.prefix}W:{ring_id}:{t_idx}"
+            data = self.client.hgetall(w_key)
+            if data:
+                commit = WCommit.from_dict(data)
+                commit.metadata = metadata or {}
+                return commit
+            else:
+                # Fallback: construct from current ring state
+                state = self.get_ring(ring_id)
+                return WCommit(
+                    ring_id=ring_id,
+                    time_index=t_idx,
+                    basis_sha1s=state.basis_sha1s if state else [],
+                    timestamp=time.time(),
+                    metadata=metadata or {},
+                )
+                
+        except redis.ResponseError as e:
+            raise RuntimeError(f"Rust W.COMMIT failed: {e}")
+    
+    def _commit_W_python(
+        self,
+        ring_id: str,
+        time_index: Optional[int] = None,
+        metadata: Optional[Dict] = None,
+    ) -> WCommit:
+        """Create W commit using Python (Redis hash storage)."""
         state = self.get_ring(ring_id)
         if not state:
             raise ValueError(f"Ring {ring_id} not found")
@@ -911,6 +1222,8 @@ class HLLSetRingStore:
         # Store commit
         key = self._key(KEY_W, f"{ring_id}:{time_index}")
         self.client.hset(key, mapping=commit.to_dict())
+        
+        return commit
         
         return commit
     
@@ -954,6 +1267,39 @@ class HLLSetRingStore:
         Returns:
             WDiff showing added/removed/shared bases
         """
+        if self._use_rust:
+            return self._diff_W_rust(ring_id, t1, t2)
+        else:
+            return self._diff_W_python(ring_id, t1, t2)
+    
+    def _diff_W_rust(self, ring_id: str, t1: int, t2: int) -> Optional[WDiff]:
+        """Compute W diff using Rust W.DIFF command."""
+        try:
+            result = self.client.execute_command(
+                "HLLSET.W.DIFF", ring_id, str(t1), str(t2)
+            )
+            
+            # Parse result: { added: [...], removed: [...], shared: [...], delta_rank: int }
+            if isinstance(result, dict):
+                return WDiff(
+                    t1=t1,
+                    t2=t2,
+                    added_bases=[r.decode() if isinstance(r, bytes) else str(r) for r in result.get(b'added', [])],
+                    removed_bases=[r.decode() if isinstance(r, bytes) else str(r) for r in result.get(b'removed', [])],
+                    shared_bases=[r.decode() if isinstance(r, bytes) else str(r) for r in result.get(b'shared', [])],
+                )
+            elif isinstance(result, (list, tuple)):
+                # Alternate format: [t1, t2, added_count, [added...], removed_count, [removed...], shared_count, [shared...]]
+                # For now, fall back to Python implementation
+                return self._diff_W_python(ring_id, t1, t2)
+            else:
+                return self._diff_W_python(ring_id, t1, t2)
+                
+        except redis.ResponseError:
+            return self._diff_W_python(ring_id, t1, t2)
+    
+    def _diff_W_python(self, ring_id: str, t1: int, t2: int) -> Optional[WDiff]:
+        """Compute W diff using Python."""
         w1 = self.get_W(ring_id, t1)
         w2 = self.get_W(ring_id, t2)
         

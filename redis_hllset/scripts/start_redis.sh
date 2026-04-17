@@ -9,9 +9,9 @@
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REDIS_DIR="$SCRIPT_DIR/.."
+source "$SCRIPT_DIR/env.sh"
 CONTAINER_NAME="${CONTAINER_NAME:-redis-server}"
-IMAGE_NAME="${IMAGE_NAME:-localhost/my-custom-redis:latest}"
+IMAGE_NAME="${IMAGE_NAME:-localhost/redis-hllset:latest}"
 
 cd "$REDIS_DIR"
 

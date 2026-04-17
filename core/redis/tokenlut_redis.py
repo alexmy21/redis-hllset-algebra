@@ -56,11 +56,12 @@ class TokenEntry:
         layer: N-gram layer (0=unigram, 1=bigram, 2=trigram)
         first_tokens: List of first tokens (for triangulation)
         tokens: List of token arrays (the n-grams that collided)
+        tf: Term frequency (total occurrences across corpus)
         
     Examples:
-        Unigram:  first_tokens=["apple","app"], tokens=[]
-        Bigram:   first_tokens=["quick","quest"], tokens=[["quick","brown"],["quest","ion"]]
-        Trigram:  first_tokens=["the"], tokens=[["the","quick","brown"]]
+        Unigram:  first_tokens=["apple","app"], tokens=[], tf=42
+        Bigram:   first_tokens=["quick","quest"], tokens=[["quick","brown"],["quest","ion"]], tf=10
+        Trigram:  first_tokens=["the"], tokens=[["the","quick","brown"]], tf=3
     """
     reg: int
     zeros: int
@@ -68,6 +69,7 @@ class TokenEntry:
     layer: int = 0
     first_tokens: List[str] = None  # JSON array of first tokens
     tokens: List[List[str]] = None  # JSON array of token arrays
+    tf: int = 0  # Term frequency (total occurrences)
     
     def __post_init__(self):
         """Initialize empty lists if None."""
@@ -120,6 +122,7 @@ class TokenEntry:
             'layer': self.layer,
             'first_tokens': json.dumps(self.first_tokens),
             'tokens': json.dumps(self.tokens),
+            'tf': self.tf,
         }
     
     @classmethod
@@ -146,15 +149,18 @@ class TokenEntry:
             layer=int(d.get('layer', 0)),
             first_tokens=first_tokens,
             tokens=tokens,
+            tf=int(d.get('tf', 0)),
         )
 
 
 # Lua script for atomic merge (avoids read-before-write pattern)
+# Supports TF increment on each add
 MERGE_ENTRY_SCRIPT = """
 local key = KEYS[1]
 local new_first_tokens = cjson.decode(ARGV[1])
 local new_tokens = cjson.decode(ARGV[2])
 local reg, zeros, hash_full, layer = ARGV[3], ARGV[4], ARGV[5], ARGV[6]
+local tf_increment = tonumber(ARGV[7]) or 1
 
 -- Check if key exists
 local exists = redis.call('EXISTS', key)
@@ -170,13 +176,15 @@ if exists == 0 then
         'first_tokens', ARGV[1], 
         'tokens', ARGV[2],
         'collision_count', collision_count,
-        'first_tokens_tag', first_tokens_tag)
+        'first_tokens_tag', first_tokens_tag,
+        'tf', tf_increment)
     return collision_count
 end
 
 -- Merge with existing
 local old_ft_json = redis.call('HGET', key, 'first_tokens') or '[]'
 local old_tk_json = redis.call('HGET', key, 'tokens') or '[]'
+local old_tf = tonumber(redis.call('HGET', key, 'tf')) or 0
 local old_ft = cjson.decode(old_ft_json)
 local old_tk = cjson.decode(old_tk_json)
 
@@ -204,14 +212,15 @@ for _, ta in ipairs(new_tokens) do
     if not found then table.insert(old_tk, ta) end
 end
 
--- Write merged entry
+-- Write merged entry with incremented TF
 local collision_count = #old_ft
 local first_tokens_tag = table.concat(old_ft, ',')
 redis.call('HSET', key, 
     'first_tokens', cjson.encode(old_ft), 
     'tokens', cjson.encode(old_tk),
     'collision_count', collision_count,
-    'first_tokens_tag', first_tokens_tag)
+    'first_tokens_tag', first_tokens_tag,
+    'tf', old_tf + tf_increment)
 return collision_count
 """
 
@@ -290,7 +299,7 @@ class TokenLUTRedis:
                 except redis.ResponseError:
                     pass  # Index didn't exist
             
-            # Define schema (collision-aware with JSON arrays + TagField)
+            # Define schema (collision-aware with JSON arrays + TagField + TF)
             schema = (
                 NumericField("reg", sortable=True),
                 NumericField("zeros", sortable=True),
@@ -300,6 +309,7 @@ class TokenLUTRedis:
                 TagField("first_tokens_tag", separator=","),     # For efficient queries
                 TextField("first_tokens"),   # JSON array of first tokens
                 TextField("tokens"),         # JSON array of token arrays
+                NumericField("tf", sortable=True),  # Term frequency (total occurrences)
             )
             
             # Create index
@@ -336,21 +346,22 @@ class TokenLUTRedis:
     
     # === Add Entries (collision-aware with Lua script) ===
     
-    def add_entry(self, entry: TokenEntry) -> str:
+    def add_entry(self, entry: TokenEntry, tf_increment: int = 1) -> str:
         """
         Add or merge a token entry to the LUT using 64-bit hash as the Redis key.
         
         Uses atomic Lua script to avoid read-before-write pattern.
-        Single round-trip, no race conditions.
+        Single round-trip, no race conditions. Increments TF on each add.
         
         Args:
             entry: TokenEntry to add
+            tf_increment: Amount to increment term frequency (default 1)
         Returns:
             Redis key of the created/updated entry (tokenlut:entry:<hash_full>)
         """
         key = f"{self.prefix}{entry.hash_full}"
         
-        # Use Lua script for atomic merge
+        # Use Lua script for atomic merge with TF increment
         collision_count = self._merge_script(
             keys=[key],
             args=[
@@ -359,7 +370,8 @@ class TokenLUTRedis:
                 str(entry.reg),
                 str(entry.zeros),
                 str(entry.hash_full),
-                str(entry.layer)
+                str(entry.layer),
+                str(tf_increment)
             ]
         )
         return key
@@ -380,11 +392,12 @@ class TokenLUTRedis:
     
     def add_token(self, token: str, reg: int, zeros: int,
                   hash_full: int = 0, layer: int = 0, 
-                  first_token: str = "") -> str:
+                  first_token: str = "", tf_increment: int = 1) -> str:
         """
         Add a token using 64-bit hash as key (collision-aware).
         
         For hash collisions, the token is appended to the existing entry's arrays.
+        TF (term frequency) is incremented on each add.
         
         Args:
             token: Token string (space-separated for n-grams)
@@ -393,6 +406,7 @@ class TokenLUTRedis:
             hash_full: Full 64-bit hash
             layer: N-gram layer (0=unigram, 1=bigram, 2=trigram)
             first_token: First token of n-gram (auto-detected if empty)
+            tf_increment: Amount to increment term frequency (default 1)
         Returns:
             Redis key of the created/updated entry (tokenlut:entry:<hash_full>)
         """
@@ -418,7 +432,7 @@ class TokenLUTRedis:
                 first_tokens=[first_token],
                 tokens=[token_parts]
             )
-        return self.add_entry(entry)
+        return self.add_entry(entry, tf_increment=tf_increment)
     
     def add_batch(self, entries: List[TokenEntry], pipeline_size: int = 1000) -> int:
         """

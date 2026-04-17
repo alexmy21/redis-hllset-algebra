@@ -15,6 +15,7 @@ export REDIS_PASSWORD="${REDIS_PASSWORD:-}"
 # Container settings
 export CONTAINER_NAME="${CONTAINER_NAME:-redis-server}"
 export CONTAINER_RUNTIME="${CONTAINER_RUNTIME:-podman}"  # podman or docker
+export IMAGE_NAME="${IMAGE_NAME:-localhost/redis-hllset:latest}"
 
 # Project paths
 export SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

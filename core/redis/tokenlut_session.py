@@ -156,7 +156,7 @@ class SessionProducer:
         self.stream_key = f"{self.config.stream_prefix}:{session_id}"
         
         # Hash function
-        from .hllset import DEFAULT_HASH_CONFIG
+        from ..hllset import DEFAULT_HASH_CONFIG
         self._hash_config = DEFAULT_HASH_CONFIG
         
         # Stats

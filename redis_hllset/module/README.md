@@ -1,6 +1,6 @@
 # Redis HLLSet Module
 
-A native Redis module implementing HLLSet Algebra - HyperLogLog with full set operations.
+A native Redis module implementing **HLLSet Algebra** - HyperLogLog with full set operations, XOR ring decomposition, and high-performance token disambiguation.
 
 ## Features
 
@@ -9,6 +9,21 @@ A native Redis module implementing HLLSet Algebra - HyperLogLog with full set op
 - **Full Set Algebra**: Union (∪), Intersection (∩), Difference (\), Symmetric Difference (⊕)
 - **O(1) Space**: Probabilistic structure with ~2% error rate
 - **High Performance**: Written in Rust with optimized Roaring Bitmaps
+- **XOR Ring Decomposition**: Express any HLLSet as XOR of linearly independent bases
+- **Token Disambiguation**: Position-based lookup with streaming support
+- **W Lattice Commits**: Temporal tracking of ring state
+
+## Documentation
+
+📚 **[Full Documentation](docs/README.md)** - Comprehensive guides and reference
+
+- [Overview](docs/01_OVERVIEW.md) - Architecture and quick start
+- [Data Structures](docs/02_DATA_STRUCTURES.md) - Internal formats and schemas
+- [HLLSet Commands](docs/03_HLLSET_COMMANDS.md) - Core operations reference
+- [Disambiguation](docs/04_DISAMBIGUATION.md) - Tensor positions and TokenLUT
+- [Ring Algebra](docs/05_RING_ALGEBRA.md) - XOR decomposition commands
+- [TokenLUT Commands](docs/06_TOKENLUT_COMMANDS.md) - Lookup table management
+- [Best Practices](docs/07_BEST_PRACTICES.md) - Usage patterns and optimization
 
 ## Building
 
@@ -34,75 +49,84 @@ A native Redis module implementing HLLSet Algebra - HyperLogLog with full set op
 
 The build produces `libredis_hllset.so` which can be loaded into Redis.
 
-## Commands
+## Quick Start
 
-### Creation
+### Loading the Module
+
+```bash
+redis-server --loadmodule ./libredis_hllset.so
+```
+
+### Basic Usage
 
 ```redis
 # Create HLLSet from tokens (returns content-addressable key)
-HLLSET.CREATE token1 token2 token3
-# Returns: "hllset:abc123..."
+redis> HLLSET.CREATE apple banana cherry
+"hllset:7ac66c0f148de9519b8bd264312c4d64f0c2d6b0"
 
-# Create from pre-computed hashes
-HLLSET.CREATEHASH 12345 67890 11111
-```
-
-### Cardinality
-
-```redis
 # Get estimated cardinality
-HLLSET.CARD hllset:abc123
-# Returns: (float) 3.0
+redis> HLLSET.CARD hllset:7ac66c0f148de9519b8bd264312c4d64f0c2d6b0
+(float) 3.0
+
+# Set operations
+redis> HLLSET.UNION key1 key2
+redis> HLLSET.INTER key1 key2
+redis> HLLSET.DIFF key1 key2
+redis> HLLSET.XOR key1 key2
+
+# Similarity
+redis> HLLSET.SIM key1 key2
+(float) 0.5
 ```
 
-### Set Operations
+## Command Summary
 
-All operations create a new key with the result:
+### HLLSet Core
 
-```redis
-# Union: A ∪ B
-HLLSET.UNION key1 key2
+| Command | Description |
+|---------|-------------|
+| `HLLSET.CREATE token [...]` | Create HLLSet from tokens |
+| `HLLSET.CREATEHASH hash [...]` | Create from pre-computed hashes |
+| `HLLSET.CARD key` | Get estimated cardinality |
+| `HLLSET.UNION key1 key2` | Union (A ∪ B) |
+| `HLLSET.INTER key1 key2` | Intersection (A ∩ B) |
+| `HLLSET.DIFF key1 key2` | Difference (A \ B) |
+| `HLLSET.XOR key1 key2` | Symmetric difference (A ⊕ B) |
+| `HLLSET.SIM key1 key2` | Jaccard similarity |
+| `HLLSET.MERGE dest key [...]` | In-place union |
+| `HLLSET.INFO key` | Get metadata |
+| `HLLSET.EXISTS key` | Check existence |
+| `HLLSET.DEL key` | Delete HLLSet |
 
-# Intersection: A ∩ B  
-HLLSET.INTER key1 key2
+### Tensor/Position Commands
 
-# Difference: A \ B
-HLLSET.DIFF key1 key2
+| Command | Description |
+|---------|-------------|
+| `HLLSET.POSITIONS key` | Get all (reg, zeros) pairs |
+| `HLLSET.POPCOUNT key` | Total set bits count |
+| `HLLSET.BITCOUNTS key` | Per-bit position counts |
+| `HLLSET.REGISTER key reg` | Get register bitmap |
+| `HLLSET.HASBIT key reg zeros` | Check if position is set |
 
-# Symmetric Difference: A ⊕ B
-HLLSET.XOR key1 key2
+### Disambiguation Commands
 
-# In-place merge (union into destination)
-HLLSET.MERGE destkey key1 key2 key3
-```
+| Command | Description |
+|---------|-------------|
+| `HLLSET.CANDIDATES key prefix [opts]` | Find LUT matches |
+| `HLLSET.SCANMATCH key prefix stream [opts]` | Stream all matches |
+| `HLLSET.POSINDEX key index_key` | Create position index |
 
-### Similarity
+### Ring Algebra Commands
 
-```redis
-# Jaccard similarity: |A ∩ B| / |A ∪ B|
-HLLSET.SIM key1 key2
-# Returns: (float) 0.5
-
-# Alias
-HLLSET.JACCARD key1 key2
-```
-
-### Info & Debug
-
-```redis
-# Get metadata
-HLLSET.INFO key
-# Returns: key, cardinality, registers, non_zero_registers, precision_bits, memory_bytes
-
-# Dump register positions
-HLLSET.DUMP key
-
-# Check existence
-HLLSET.EXISTS key
-
-# Delete
-HLLSET.DEL key
-```
+| Command | Description |
+|---------|-------------|
+| `HLLSET.RING.INIT ring [PBITS p]` | Initialize decomposition ring |
+| `HLLSET.RING.INGEST ring token [opts]` | Ingest and decompose |
+| `HLLSET.RING.BASIS ring` | Get basis SHA1s |
+| `HLLSET.RING.RANK ring` | Get current rank |
+| `HLLSET.W.COMMIT ring [META json]` | Create W commit |
+| `HLLSET.W.DIFF ring t1 t2` | Compare commits |
+| `HLLSET.RECONSTRUCT sha1` | Rebuild from XOR expression |
 
 ## Usage Example
 

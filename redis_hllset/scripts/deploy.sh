@@ -57,11 +57,11 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-# Configuration
-REDIS_DIR="$SCRIPT_DIR/.."
-FUNCTIONS_DIR="$REDIS_DIR/functions"
-BACKUP_DIR="$REDIS_DIR/backups"
-IMAGE_NAME="${IMAGE_NAME:-localhost/my-custom-redis:latest}"
+# Configuration (use env.sh values, with fallbacks)
+REDIS_DIR="${REDIS_DIR:-$SCRIPT_DIR/..}"
+FUNCTIONS_DIR="${FUNCTIONS_DIR:-$REDIS_DIR/functions}"
+BACKUP_DIR="${BACKUP_DIR:-$REDIS_DIR/backups}"
+IMAGE_NAME="${IMAGE_NAME:-localhost/redis-hllset:latest}"
 CONTAINER_NAME="${CONTAINER_NAME:-redis-server}"
 DEPLOY_TAG=$(date +%Y%m%d_%H%M%S)
 BACKUP_FILE=""
@@ -114,29 +114,28 @@ fi
 # ============================================================
 step "Pre-flight checks"
 
-# Check Lua syntax
+# Check Lua syntax (optional — skipped if no Lua functions present)
 log_info "Checking Lua syntax..."
 LUA_FILE="$FUNCTIONS_DIR/hllset.lua"
 if [ ! -f "$LUA_FILE" ]; then
-    log_error "Lua file not found: $LUA_FILE"
-    exit 1
-fi
-
-# Basic Lua syntax check (if lua is available)
-if command -v lua5.1 &>/dev/null; then
-    if ! lua5.1 -p "$LUA_FILE" 2>/dev/null; then
-        log_error "Lua syntax error in $LUA_FILE"
-        exit 1
-    fi
-    log_ok "Lua syntax OK"
-elif command -v luac &>/dev/null; then
-    if ! luac -p "$LUA_FILE" 2>/dev/null; then
-        log_error "Lua syntax error in $LUA_FILE"
-        exit 1
-    fi
-    log_ok "Lua syntax OK"
+    log_warn "No Lua functions found (using native Rust commands), skipping Lua check"
 else
-    log_warn "No Lua checker available, skipping syntax check"
+    # Basic Lua syntax check (if lua is available)
+    if command -v lua5.1 &>/dev/null; then
+        if ! lua5.1 -p "$LUA_FILE" 2>/dev/null; then
+            log_error "Lua syntax error in $LUA_FILE"
+            exit 1
+        fi
+        log_ok "Lua syntax OK"
+    elif command -v luac &>/dev/null; then
+        if ! luac -p "$LUA_FILE" 2>/dev/null; then
+            log_error "Lua syntax error in $LUA_FILE"
+            exit 1
+        fi
+        log_ok "Lua syntax OK"
+    else
+        log_warn "No Lua checker available, skipping syntax check"
+    fi
 fi
 
 # Check container runtime
@@ -278,7 +277,9 @@ fi
 # ============================================================
 step "Loading Lua functions"
 
-if ! $DRY_RUN; then
+if [ ! -f "$FUNCTIONS_DIR/hllset.lua" ]; then
+    log_warn "No Lua functions found (using native Rust commands), skipping"
+elif ! $DRY_RUN; then
     # Give Redis a moment to fully initialize
     sleep 1
     

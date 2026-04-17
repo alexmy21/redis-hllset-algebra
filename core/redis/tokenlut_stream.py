@@ -143,8 +143,8 @@ class TokenLUTStream:
         if hash_func:
             self._hash_func = hash_func
         else:
-            # Import default hash config
-            from .hllset import DEFAULT_HASH_CONFIG
+            # Import default hash config from parent package
+            from ..hllset import DEFAULT_HASH_CONFIG
             self._hash_config = DEFAULT_HASH_CONFIG
             self._hash_func = self._default_hash
     

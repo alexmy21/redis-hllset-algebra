@@ -18,6 +18,13 @@ FUNCTIONS_DIR="$SCRIPT_DIR/../functions"
 echo "Loading HLLSet Algebra functions into Redis at $HOST:$PORT"
 echo "=========================================================="
 
+# Check if Lua functions exist (may be absent when using native Rust commands)
+if [ ! -f "$FUNCTIONS_DIR/hllset.lua" ]; then
+    echo "ℹ No Lua functions found in $FUNCTIONS_DIR"
+    echo "  Native Rust commands (HLLSET.RING.*) are used instead."
+    exit 0
+fi
+
 # Load hllset.lua
 echo "Loading hllset.lua..."
 result=$(redis-cli -h "$HOST" -p "$PORT" FUNCTION LOAD REPLACE "$(cat "$FUNCTIONS_DIR/hllset.lua")" 2>&1)
